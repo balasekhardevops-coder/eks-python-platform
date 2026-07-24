@@ -216,35 +216,37 @@ stage('Build Docker Image') {
         }
 
         stage('Scan Docker Image') {
-            steps {
-                bat '''
-                    @echo off
+    steps {
+        bat '''
+            @echo off
 
-                    trivy image ^
-                      --no-progress ^
-                      --severity HIGH,CRITICAL ^
-                      --format table ^
-                      --output trivy-report.txt ^
-                      "%LOCAL_IMAGE%"
+            trivy image ^
+              --db-repository ghcr.io/aquasecurity/trivy-db:2 ^
+              --no-progress ^
+              --severity HIGH,CRITICAL ^
+              --format table ^
+              --output trivy-report.txt ^
+              "%LOCAL_IMAGE%"
 
-                    trivy image ^
-                      --no-progress ^
-                      --ignore-unfixed ^
-                      --severity HIGH,CRITICAL ^
-                      --exit-code 1 ^
-                      "%LOCAL_IMAGE%"
-                '''
-            }
+            trivy image ^
+              --db-repository ghcr.io/aquasecurity/trivy-db:2 ^
+              --no-progress ^
+              --ignore-unfixed ^
+              --severity HIGH,CRITICAL ^
+              --exit-code 1 ^
+              "%LOCAL_IMAGE%"
+        '''
+    }
 
-            post {
-                always {
-                    archiveArtifacts(
-                        artifacts: 'trivy-report.txt',
-                        allowEmptyArchive: true
-                    )
-                }
-            }
+    post {
+        always {
+            archiveArtifacts(
+                artifacts: 'trivy-report.txt',
+                allowEmptyArchive: true
+            )
         }
+    }
+}
 
         stage('Verify AWS Identity') {
             steps {
