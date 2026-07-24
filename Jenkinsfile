@@ -159,7 +159,7 @@ pipeline {
                     ".venv\\Scripts\\python.exe" ^
                       -m pip install ^
                       --disable-pip-version-check ^
-                      -r requirements.txt
+                      -r "application\\requirements.txt"
                 '''
             }
         }
