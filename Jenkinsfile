@@ -50,12 +50,23 @@ pipeline {
             }
         }
 
-        stage('Run Test Cases') {
+       stage('Run Test Cases') {
             steps {
                 bat '''
                     @echo off
-                    python -m pip install -r requirements.txt
-                    python -m pytest
+                    setlocal
+
+                    py --version
+
+                    if not exist ".venv\\Scripts\\python.exe" (
+                        py -m venv .venv
+                    )
+
+                    .venv\\Scripts\\python.exe -m pip install --upgrade pip
+                    .venv\\Scripts\\python.exe -m pip install -r requirements.txt
+                    .venv\\Scripts\\python.exe -m pytest
+
+                    endlocal
                 '''
             }
         }
