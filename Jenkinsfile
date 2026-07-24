@@ -164,7 +164,7 @@ pipeline {
             }
         }
 
-        sstage('Run Test Cases') {
+        stage('Run Test Cases') {
     steps {
         dir('application') {
             bat '''
