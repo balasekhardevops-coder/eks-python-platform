@@ -6,65 +6,182 @@ pipeline {
     parameters {
         choice(
             name: 'ENVIRONMENT',
-            choices: ['dev', 'qa', 'stage'],
+            choices: ['dev'],
             description: 'Target environment'
         )
     }
 
     environment {
-        APP_NAME       = 'eks-python-app'
-        AWS_REGION     = 'us-east-1'
-        AWS_ACCOUNT_ID = '758854589827'
+        APP_NAME = 'eks-python-app'
 
-        ECR_REGISTRY   = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-        ECR_REPOSITORY = "${ENVIRONMENT}/${APP_NAME}"
-        IMAGE_TAG      = "${BUILD_NUMBER}"
-        LOCAL_IMAGE    = "${APP_NAME}:${BUILD_NUMBER}"
-        ECR_IMAGE      = "${ECR_REGISTRY}/${ECR_REPOSITORY}:${BUILD_NUMBER}"
+        AWS_REGION = 'us-east-1'
+        AWS_PROFILE = 'jhansi'
+
+        ECR_REGISTRY =
+            '758854589827.dkr.ecr.us-east-1.amazonaws.com'
+
+        ECR_REPOSITORY =
+            'dev/eks-python-app'
+
+        PYTHON_EXE =
+            'C:\\Users\\Balasekhar\\AppData\\Local\\Python\\bin\\python.exe'
+
+        AWS_CONFIG_FILE =
+            'C:\\Users\\Balasekhar\\.aws\\config'
+
+        AWS_SHARED_CREDENTIALS_FILE =
+            'C:\\Users\\Balasekhar\\.aws\\credentials'
     }
 
     options {
         skipDefaultCheckout(true)
         disableConcurrentBuilds()
         timestamps()
-        timeout(time: 60, unit: 'MINUTES')
+
+        timeout(
+            time: 60,
+            unit: 'MINUTES'
+        )
+
+        buildDiscarder(
+            logRotator(
+                numToKeepStr: '20'
+            )
+        )
     }
 
     stages {
-        stage('Check Tools') {
-            steps {
-                bat '''
-                    @echo off
-                    git --version
-                    python --version
-                    docker version
-                    aws --version
-                    trivy --version
-                '''
-            }
-        }
-
         stage('Clone Repo') {
             steps {
                 checkout scm
             }
         }
 
-      stage('Run Test Cases') {
+        stage('Generate Image Tag') {
+            steps {
+                script {
+                    env.GIT_COMMIT_SHORT = bat(
+                        script: '@git rev-parse --short=8 HEAD',
+                        returnStdout: true
+                    ).trim()
+
+                    env.IMAGE_TAG =
+                        "${env.BUILD_NUMBER}-${env.GIT_COMMIT_SHORT}"
+
+                    env.LOCAL_IMAGE =
+                        "${env.APP_NAME}:${env.IMAGE_TAG}"
+
+                    env.ECR_IMAGE =
+                        "${env.ECR_REGISTRY}/" +
+                        "${env.ECR_REPOSITORY}:" +
+                        "${env.IMAGE_TAG}"
+
+                    currentBuild.displayName =
+                        "#${env.BUILD_NUMBER} ${env.IMAGE_TAG}"
+
+                    echo "Local image: ${env.LOCAL_IMAGE}"
+                    echo "ECR image: ${env.ECR_IMAGE}"
+                }
+            }
+        }
+
+        stage('Check Tools') {
             steps {
                 bat '''
                     @echo off
 
-                    "%PYTHON_EXE%" --version
+                    echo Jenkins user:
+                    whoami
 
-                    if not exist ".venv\\Scripts\\python.exe" (
-                        "%PYTHON_EXE%" -m venv .venv
+                    echo.
+                    echo Workspace:
+                    echo %WORKSPACE%
+
+                    echo.
+                    echo Checking Git:
+                    git --version
+
+                    echo.
+                    echo Checking Python:
+                    echo PYTHON_EXE=%PYTHON_EXE%
+
+                    if not exist "%PYTHON_EXE%" (
+                        echo Python executable not found:
+                        echo %PYTHON_EXE%
+                        exit /b 1
                     )
 
-                    ".venv\\Scripts\\python.exe" -m pip install --upgrade pip
-                    ".venv\\Scripts\\python.exe" -m pip install -r requirements.txt
-                    ".venv\\Scripts\\python.exe" -m pytest
+                    "%PYTHON_EXE%" --version
+
+                    echo.
+                    echo Checking Docker:
+                    docker version
+
+                    echo.
+                    echo Checking AWS CLI:
+                    aws --version
+
+                    echo.
+                    echo Checking Trivy:
+                    trivy --version
                 '''
+            }
+        }
+
+        stage('Create Virtual Environment') {
+            steps {
+                bat '''
+                    @echo off
+
+                    if not exist ".venv\\Scripts\\python.exe" (
+                        echo Creating Python virtual environment...
+                        "%PYTHON_EXE%" -m venv .venv
+                    ) else (
+                        echo Virtual environment already exists.
+                    )
+
+                    ".venv\\Scripts\\python.exe" --version
+                    ".venv\\Scripts\\python.exe" -m pip --version
+                '''
+            }
+        }
+
+        stage('Install Dependencies') {
+            steps {
+                bat '''
+                    @echo off
+
+                    ".venv\\Scripts\\python.exe" ^
+                      -m pip install ^
+                      --disable-pip-version-check ^
+                      --upgrade pip
+
+                    ".venv\\Scripts\\python.exe" ^
+                      -m pip install ^
+                      --disable-pip-version-check ^
+                      -r requirements.txt
+                '''
+            }
+        }
+
+        stage('Run Test Cases') {
+            steps {
+                bat '''
+                    @echo off
+
+                    ".venv\\Scripts\\python.exe" ^
+                      -m pytest ^
+                      --junitxml=pytest-results.xml
+                '''
+            }
+
+            post {
+                always {
+                    junit(
+                        testResults: 'pytest-results.xml',
+                        allowEmptyResults: true
+                    )
+                }
             }
         }
 
@@ -72,9 +189,24 @@ pipeline {
             steps {
                 bat '''
                     @echo off
+
+                    echo Building image:
+                    echo %LOCAL_IMAGE%
+
                     docker build ^
-                      -t "%LOCAL_IMAGE%" ^
+                      --pull ^
+                      --tag "%LOCAL_IMAGE%" ^
                       .
+                '''
+            }
+        }
+
+        stage('Inspect Docker Image') {
+            steps {
+                bat '''
+                    @echo off
+
+                    docker image inspect "%LOCAL_IMAGE%"
                 '''
             }
         }
@@ -83,11 +215,30 @@ pipeline {
             steps {
                 bat '''
                     @echo off
+
                     trivy image ^
+                      --no-progress ^
+                      --severity HIGH,CRITICAL ^
+                      --format table ^
+                      --output trivy-report.txt ^
+                      "%LOCAL_IMAGE%"
+
+                    trivy image ^
+                      --no-progress ^
+                      --ignore-unfixed ^
                       --severity HIGH,CRITICAL ^
                       --exit-code 1 ^
                       "%LOCAL_IMAGE%"
                 '''
+            }
+
+            post {
+                always {
+                    archiveArtifacts(
+                        artifacts: 'trivy-report.txt',
+                        allowEmptyArchive: true
+                    )
+                }
             }
         }
 
@@ -95,7 +246,9 @@ pipeline {
             steps {
                 bat '''
                     @echo off
-                    aws sts get-caller-identity
+
+                    aws sts get-caller-identity ^
+                      --profile "%AWS_PROFILE%"
                 '''
             }
         }
@@ -104,9 +257,11 @@ pipeline {
             steps {
                 bat '''
                     @echo off
+
                     aws ecr describe-repositories ^
                       --repository-names "%ECR_REPOSITORY%" ^
-                      --region "%AWS_REGION%"
+                      --region "%AWS_REGION%" ^
+                      --profile "%AWS_PROFILE%"
                 '''
             }
         }
@@ -115,8 +270,10 @@ pipeline {
             steps {
                 bat '''
                     @echo off
+
                     aws ecr get-login-password ^
                       --region "%AWS_REGION%" ^
+                      --profile "%AWS_PROFILE%" ^
                     | docker login ^
                       --username AWS ^
                       --password-stdin "%ECR_REGISTRY%"
@@ -128,6 +285,7 @@ pipeline {
             steps {
                 bat '''
                     @echo off
+
                     docker tag ^
                       "%LOCAL_IMAGE%" ^
                       "%ECR_IMAGE%"
@@ -141,8 +299,35 @@ pipeline {
             steps {
                 bat '''
                     @echo off
+
+                    echo Publishing image:
+                    echo %ECR_IMAGE%
+
                     docker push "%ECR_IMAGE%"
                 '''
+            }
+        }
+
+        stage('Save Image Metadata') {
+            steps {
+                bat '''
+                    @echo off
+
+                    (
+                        echo ENVIRONMENT=%ENVIRONMENT%
+                        echo IMAGE_TAG=%IMAGE_TAG%
+                        echo IMAGE_URI=%ECR_IMAGE%
+                        echo GIT_COMMIT=%GIT_COMMIT%
+                        echo BUILD_NUMBER=%BUILD_NUMBER%
+                    ) > image-metadata.properties
+
+                    type image-metadata.properties
+                '''
+
+                archiveArtifacts(
+                    artifacts: 'image-metadata.properties',
+                    fingerprint: true
+                )
             }
         }
     }
@@ -154,6 +339,7 @@ pipeline {
 
                 Environment : ${params.ENVIRONMENT}
                 Image       : ${env.ECR_IMAGE}
+                Commit      : ${env.GIT_COMMIT_SHORT}
             """
         }
 
@@ -162,22 +348,38 @@ pipeline {
                 Pipeline failed.
 
                 Job         : ${env.JOB_NAME}
-                Build       : ${env.BUILD_NUMBER}
+                Build       : #${env.BUILD_NUMBER}
                 Environment : ${params.ENVIRONMENT}
                 URL         : ${env.BUILD_URL}
+            """
+        }
+
+        unstable {
+            echo """
+                Pipeline completed with unstable status.
+
+                Job   : ${env.JOB_NAME}
+                Build : #${env.BUILD_NUMBER}
+                URL   : ${env.BUILD_URL}
             """
         }
 
         always {
             bat '''
                 @echo off
+
                 docker logout "%ECR_REGISTRY%" 2>nul
+
                 docker image rm "%ECR_IMAGE%" 2>nul
                 docker image rm "%LOCAL_IMAGE%" 2>nul
+
                 exit /b 0
             '''
 
-            cleanWs()
+            cleanWs(
+                deleteDirs: true,
+                disableDeferredWipeout: true
+            )
         }
     }
 }
