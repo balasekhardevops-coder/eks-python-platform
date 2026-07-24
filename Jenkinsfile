@@ -164,42 +164,46 @@ pipeline {
             }
         }
 
-        stage('Run Test Cases') {
-            steps {
-                bat '''
-                    @echo off
+        sstage('Run Test Cases') {
+    steps {
+        dir('application') {
+            bat '''
+                @echo off
 
-                    ".venv\\Scripts\\python.exe" ^
-                      -m pytest ^
-                      --junitxml=pytest-results.xml
-                '''
-            }
-
-            post {
-                always {
-                    junit(
-                        testResults: 'pytest-results.xml',
-                        allowEmptyResults: true
-                    )
-                }
-            }
+                "..\\.venv\\Scripts\\python.exe" ^
+                  -m pytest ^
+                  --junitxml=pytest-results.xml
+            '''
         }
+    }
 
-        stage('Build Docker Image') {
-            steps {
-                bat '''
-                    @echo off
-
-                    echo Building image:
-                    echo %LOCAL_IMAGE%
-
-                    docker build ^
-                      --pull ^
-                      --tag "%LOCAL_IMAGE%" ^
-                      .
-                '''
-            }
+    post {
+        always {
+            junit(
+                testResults: 'application/pytest-results.xml',
+                allowEmptyResults: true
+            )
         }
+    }
+}
+
+stage('Build Docker Image') {
+    steps {
+        dir('application') {
+            bat '''
+                @echo off
+
+                echo Building image:
+                echo %LOCAL_IMAGE%
+
+                docker build ^
+                  --pull ^
+                  --tag "%LOCAL_IMAGE%" ^
+                  .
+            '''
+        }
+    }
+}
 
         stage('Inspect Docker Image') {
             steps {
