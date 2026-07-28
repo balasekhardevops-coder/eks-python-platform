@@ -235,7 +235,7 @@ stage('Build Docker Image') {
                 echo Readiness attempt %%i of 20...
 
                 curl.exe --silent --fail ^
-                  http://127.0.0.1:9010/health >nul 2>&1
+  http://127.0.0.1:9010/health/live >nul 2>&1
 
                 if !errorlevel! EQU 0 (
                     set READY=true
