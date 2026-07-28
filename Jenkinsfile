@@ -207,59 +207,67 @@ stage('Build Docker Image') {
     }
 }
 
-        stage('Smoke Test Container') {
-            steps {
-                bat '''
-                    @echo off
-                    setlocal EnableDelayedExpansion
+        stage('Smoke Test') {
+    steps {
+        bat '''
+            @echo off
+            setlocal EnableDelayedExpansion
 
-                    docker rm -f "%SMOKE_CONTAINER%" 2>nul
+            set CONTAINER_NAME=eks-python-app-smoke
 
-                    docker run -d ^
-                      --name "%SMOKE_CONTAINER%" ^
-                      -e PORT=%APP_PORT% ^
-                      -p 127.0.0.1:%APP_PORT%:%APP_PORT% ^
-                      "%LOCAL_IMAGE%"
+            echo Removing an existing smoke-test container...
+            docker rm -f %CONTAINER_NAME% >nul 2>&1
 
-                    set "READY="
+            echo Starting smoke-test container...
+            docker run -d ^
+              --name %CONTAINER_NAME% ^
+              -p 9010:9010 ^
+              %LOCAL_IMAGE%
 
-                    for /L %%I in (1,1,20) do (
-                        curl --silent --fail ^
-                          "http://127.0.0.1:%APP_PORT%/health/ready" >nul 2>&1
+            if errorlevel 1 (
+                echo Failed to start the container.
+                exit /b 1
+            )
 
-                        if !ERRORLEVEL! EQU 0 (
-                            set "READY=1"
-                            goto :healthy
-                        )
+            set READY=false
 
-                        timeout /t 2 /nobreak >nul
-                    )
+            for /L %%i in (1,1,20) do (
+                echo Readiness attempt %%i of 20...
 
-                    :healthy
-                    if not defined READY (
-                        echo Container did not become ready on port %APP_PORT%.
-                        docker logs "%SMOKE_CONTAINER%"
-                        docker rm -f "%SMOKE_CONTAINER%" 2>nul
-                        exit /b 1
-                    )
+                curl.exe --silent --fail ^
+                  http://127.0.0.1:9010/health >nul 2>&1
 
-                    curl --silent --fail ^
-                      "http://127.0.0.1:%APP_PORT%/"
+                if !errorlevel! EQU 0 (
+                    set READY=true
+                    goto :container_ready
+                )
 
-                    docker rm -f "%SMOKE_CONTAINER%"
-                '''
-            }
+                powershell -NoProfile -Command "Start-Sleep -Seconds 2"
+            )
 
-            post {
-                always {
-                    bat '''
-                        @echo off
-                        docker rm -f "%SMOKE_CONTAINER%" 2>nul
-                        exit /b 0
-                    '''
-                }
-            }
-        }
+            :container_ready
+
+            if "!READY!"=="false" (
+                echo Container did not become ready on port 9010.
+                echo.
+                echo Container status:
+                docker ps -a --filter "name=%CONTAINER_NAME%"
+                echo.
+                echo Container logs:
+                docker logs %CONTAINER_NAME%
+                docker rm -f %CONTAINER_NAME% >nul 2>&1
+                exit /b 1
+            )
+
+            echo Container is ready on port 9010.
+
+            docker logs %CONTAINER_NAME%
+            docker rm -f %CONTAINER_NAME% >nul 2>&1
+
+            endlocal
+        '''
+    }
+}
 
         stage('Inspect Docker Image') {
             steps {
