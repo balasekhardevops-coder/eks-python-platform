@@ -13,6 +13,8 @@ pipeline {
 
     environment {
         APP_NAME = 'eks-python-app'
+        APP_PORT = '9010'
+        SMOKE_CONTAINER = 'eks-python-app-smoke'
 
         AWS_REGION = 'us-east-1'
         AWS_PROFILE = 'jhansi'
@@ -205,6 +207,60 @@ stage('Build Docker Image') {
     }
 }
 
+        stage('Smoke Test Container') {
+            steps {
+                bat '''
+                    @echo off
+                    setlocal EnableDelayedExpansion
+
+                    docker rm -f "%SMOKE_CONTAINER%" 2>nul
+
+                    docker run -d ^
+                      --name "%SMOKE_CONTAINER%" ^
+                      -e PORT=%APP_PORT% ^
+                      -p 127.0.0.1:%APP_PORT%:%APP_PORT% ^
+                      "%LOCAL_IMAGE%"
+
+                    set "READY="
+
+                    for /L %%I in (1,1,20) do (
+                        curl --silent --fail ^
+                          "http://127.0.0.1:%APP_PORT%/health/ready" >nul 2>&1
+
+                        if !ERRORLEVEL! EQU 0 (
+                            set "READY=1"
+                            goto :healthy
+                        )
+
+                        timeout /t 2 /nobreak >nul
+                    )
+
+                    :healthy
+                    if not defined READY (
+                        echo Container did not become ready on port %APP_PORT%.
+                        docker logs "%SMOKE_CONTAINER%"
+                        docker rm -f "%SMOKE_CONTAINER%" 2>nul
+                        exit /b 1
+                    )
+
+                    curl --silent --fail ^
+                      "http://127.0.0.1:%APP_PORT%/"
+
+                    docker rm -f "%SMOKE_CONTAINER%"
+                '''
+            }
+
+            post {
+                always {
+                    bat '''
+                        @echo off
+                        docker rm -f "%SMOKE_CONTAINER%" 2>nul
+                        exit /b 0
+                    '''
+                }
+            }
+        }
+
         stage('Inspect Docker Image') {
             steps {
                 bat '''
@@ -374,6 +430,7 @@ stage('Build Docker Image') {
             bat '''
                 @echo off
 
+                docker rm -f "%SMOKE_CONTAINER%" 2>nul
                 docker logout "%ECR_REGISTRY%" 2>nul
 
                 docker image rm "%ECR_IMAGE%" 2>nul
